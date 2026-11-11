@@ -1,0 +1,11 @@
+{
+  "display_name": "万界系统管理局（System Flow）",
+  "loading_order": 10,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "OpenAI",
+  "version": "0.1.0",
+  "home page": ""
+}

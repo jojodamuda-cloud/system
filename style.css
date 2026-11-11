@@ -70,3 +70,19 @@
 #system-flow-root .sf-pending pre{border-radius:6px;background:#041321;color:#8de5ff}
 #system-flow-root .sf-footer{color:#648da9;letter-spacing:.04em}
 @media(max-width:520px){#system-flow-root .sf-grid{grid-template-columns:1fr}#system-flow-root .sf-tabs button{font-size:.74em;padding:8px 5px}#system-flow-root .sf-header h2{font-size:1.08em}}
+
+
+/* System Flow 0.1.2 — floating brush launcher and modal */
+#system-flow-root{position:relative;z-index:10000;margin:0}
+#sf-fab{position:fixed;right:22px;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:10002;width:54px;height:54px;padding:13px;border-radius:50%;border:1px solid rgba(104,225,255,.9);background:linear-gradient(145deg,#087bd0,#07365c);box-shadow:0 5px 22px rgba(0,0,0,.42),0 0 18px rgba(72,216,255,.4);display:grid;place-items:center;cursor:pointer}
+#sf-fab svg{width:27px;height:27px;fill:none;stroke:#e8fbff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 4px rgba(72,216,255,.7))}
+#sf-fab:active{transform:scale(.94)}
+#sf-modal{position:fixed;inset:0;z-index:10001;display:none;align-items:center;justify-content:center;padding:18px;padding-bottom:calc(18px + env(safe-area-inset-bottom,0px))}
+#sf-modal.open{display:flex}
+#sf-modal .sf-backdrop{position:absolute;inset:0;background:rgba(1,8,16,.76);backdrop-filter:blur(5px)}
+#sf-modal .sf-window{position:relative;z-index:1;width:min(920px,100%);max-height:min(88vh,900px);overflow:auto;border:1px solid rgba(72,216,255,.55);border-radius:15px;background:#071321;box-shadow:0 18px 70px rgba(0,0,0,.65),0 0 30px rgba(22,140,255,.2)}
+#sf-modal .sf-window-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;padding:11px 14px;background:linear-gradient(90deg,#0b2945,#0b1a2d);border-bottom:1px solid rgba(72,216,255,.3);color:#e7faff}
+#sf-modal .sf-window-head button{font-size:25px;line-height:1;padding:3px 10px;border-radius:7px}
+#sf-modal #sf-panel{padding:10px 13px 14px}
+#sf-modal .sf-card{margin:10px 0}
+@media(max-width:600px){#sf-fab{right:15px;bottom:calc(18px + env(safe-area-inset-bottom,0px));width:50px;height:50px}#sf-modal{padding:7px;padding-bottom:calc(7px + env(safe-area-inset-bottom,0px))}#sf-modal .sf-window{max-height:94vh;border-radius:11px}#sf-modal #sf-panel{padding:8px}}

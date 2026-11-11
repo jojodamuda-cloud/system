@@ -6,16 +6,60 @@
     "hell": 3
   },
   "builtInSystems": [
-    { "id": "roleplay", "name": "扮演角色系统", "shop": true },
-    { "id": "pinduoduo", "name": "拼多多系统", "shop": true },
-    { "id": "taobao", "name": "淘宝系统", "shop": true },
-    { "id": "omniverse", "name": "万界全能系统", "shop": true },
-    { "id": "dressing", "name": "换装系统", "shop": true },
-    { "id": "faith", "name": "信仰系统", "shop": true },
-    { "id": "survival", "name": "求生系统", "shop": true },
-    { "id": "攻略系统", "name": "攻略系统", "shop": true },
-    { "id": "cultivation", "name": "修仙系统", "shop": true },
-    { "id": "martial", "name": "习武系统", "shop": true },
-    { "id": "baidu", "name": "百度系统", "shop": false }
+    {
+      "id": "roleplay",
+      "name": "扮演角色系统",
+      "shop": true
+    },
+    {
+      "id": "pinduoduo",
+      "name": "拼多多系统",
+      "shop": true
+    },
+    {
+      "id": "taobao",
+      "name": "淘宝系统",
+      "shop": true
+    },
+    {
+      "id": "omniverse",
+      "name": "万界全能系统",
+      "shop": true
+    },
+    {
+      "id": "dressing",
+      "name": "换装系统",
+      "shop": true
+    },
+    {
+      "id": "faith",
+      "name": "信仰系统",
+      "shop": true
+    },
+    {
+      "id": "survival",
+      "name": "求生系统",
+      "shop": true
+    },
+    {
+      "id": "攻略",
+      "name": "攻略系统",
+      "shop": true
+    },
+    {
+      "id": "cultivation",
+      "name": "修仙系统",
+      "shop": true
+    },
+    {
+      "id": "martial",
+      "name": "习武系统",
+      "shop": true
+    },
+    {
+      "id": "baidu",
+      "name": "百度系统",
+      "shop": false
+    }
   ]
 }

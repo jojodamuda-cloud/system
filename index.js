@@ -46,11 +46,29 @@ let panel, promptTimer;
 let activeTab = "tasks";
 
 function ctx() { return window.SillyTavern?.getContext?.() ?? null; }
+function currentChatKey(c = ctx()) {
+    if (!c) return null;
+    const chat = Array.isArray(c.chat) ? c.chat : [];
+    const chatId = c.chatId ?? c.chatFileName ?? c.chatName ?? c.groupId ?? null;
+    const character = c.characterId ?? c.characterName ?? c.name2 ?? "";
+    if (chatId !== null && chatId !== undefined && String(chatId)) return `${c.groupId ? "group" : "chat"}:${String(chatId)}:${String(character)}`;
+    if (chat.length) {
+        const first = chat[0] || {};
+        return `fallback:${String(character)}:${String(first.send_date || first.timestamp || first.mes || first.name || "")}`;
+    }
+    return null;
+}
 function state() {
     const c = ctx();
     if (!c?.chatMetadata) return null;
-    if (!c.chatMetadata[META_KEY]) c.chatMetadata[META_KEY] = DEFAULT_STATE();
+    const chatKey = currentChatKey(c);
+    if (!chatKey) return null;
+    const saved = c.chatMetadata[META_KEY];
+    if (!saved || saved.ownerChatKey !== chatKey) {
+        c.chatMetadata[META_KEY] = { ...DEFAULT_STATE(), ownerChatKey: chatKey };
+    }
     c.chatMetadata[META_KEY] = migrate(c.chatMetadata[META_KEY]);
+    c.chatMetadata[META_KEY].ownerChatKey = chatKey;
     return c.chatMetadata[META_KEY];
 }
 function migrate(s) {
@@ -351,12 +369,41 @@ function bindTab(s,tab) {
 }
 
 function mount() {
-    const target = $("#extensions_settings2");
-    if (!target.length || $("#system-flow-root").length) return;
-    target.append(`<div id="system-flow-root" class="sf-root"><div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>万界系统管理局 · System Flow</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content"><div id="sf-panel"></div></div></div></div>`);
-    panel=document.querySelector("#sf-panel");
-    $(".sf-root .inline-drawer-toggle").on("click",function(){ $(this).next().slideToggle(150); $(this).find(".inline-drawer-icon").toggleClass("down up"); });
+    if (document.querySelector("#system-flow-root")) {
+        panel = document.querySelector("#sf-panel");
+        return;
+    }
+    const root = document.createElement("div");
+    root.id = "system-flow-root";
+    root.className = "sf-root";
+    root.innerHTML = `
+      <button id="sf-fab" type="button" aria-label="打开万界系统管理局" title="万界系统管理局">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.2 6.1 17.9 9.8M4 20l4.7-1 10.9-10.9a2.6 2.6 0 0 0-3.7-3.7L5 15.3 4 20Z"/><path d="m13 7.3 3.7 3.7M4 20l4.1-.9"/></svg>
+      </button>
+      <div id="sf-modal" class="sf-modal" aria-hidden="true">
+        <div class="sf-backdrop" data-sf-close></div>
+        <section class="sf-window" role="dialog" aria-modal="true" aria-label="万界系统管理局">
+          <div class="sf-window-head"><b>万界系统管理局 · System Flow</b><button id="sf-close" type="button" aria-label="关闭">×</button></div>
+          <div id="sf-panel"></div>
+        </section>
+      </div>`;
+    document.body.appendChild(root);
+    panel = root.querySelector("#sf-panel");
+    const modal = root.querySelector("#sf-modal");
+    root.querySelector("#sf-fab").addEventListener("click", () => {
+        modal.classList.add("open"); modal.setAttribute("aria-hidden", "false"); render();
+    });
+    const close = () => { modal.classList.remove("open"); modal.setAttribute("aria-hidden", "true"); };
+    root.querySelector("#sf-close").addEventListener("click", close);
+    root.querySelector("[data-sf-close]").addEventListener("click", close);
+    document.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
     render();
+}
+function onChatChanged(){
+    panel = document.querySelector("#sf-panel");
+    const modal = document.querySelector("#sf-modal");
+    if (modal?.classList.contains("open")) render();
+    refreshPrompt();
 }
 function onChatChanged(){ panel=document.querySelector("#sf-panel"); render(); refreshPrompt(); }
 function onGenerationEnded() {
@@ -395,6 +442,13 @@ function extractMessageText(data, seen = new WeakSet(), depth = 0) {
 
 function init() {
     mount();
+    if (!document.querySelector("#system-flow-root")) {
+        const observer = new MutationObserver(() => {
+            mount();
+            if (document.querySelector("#system-flow-root")) observer.disconnect();
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
     refreshPrompt();
     if (eventSource && event_types?.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED,onChatChanged);
     if (eventSource && event_types?.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED,onMessageReceived);

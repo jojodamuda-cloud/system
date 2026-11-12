@@ -3,7 +3,7 @@ import { eventSource, event_types } from "../../../../script.js";
 const EXT = "system_flow";
 const META_KEY = "system_flow_v1";
 const LOG_PREFIX = "[System Flow]";
-const PLUGIN_VERSION = "0.1.5";
+const PLUGIN_VERSION = "0.1.6";
 const WAND_ENTRY_ID = "system_flow_wand_entry";
 const SETTINGS_DRAWER_ID = "system-flow-settings";
 
@@ -39,6 +39,33 @@ const ATTRIBUTE_LABELS = {
     charisma: "魅力"
 };
 
+const PERSONA_ATTRIBUTE_ALIASES = {
+    strength: "strength",
+    "力量": "strength",
+    speed: "speed",
+    "速度": "speed",
+    constitution: "constitution",
+    "体质": "constitution",
+    stamina: "stamina",
+    "耐力": "stamina",
+    agility: "agility",
+    "敏捷": "agility",
+    iq: "iq",
+    "智商": "iq",
+    intelligence: "intelligence",
+    "智力": "intelligence",
+    memory: "memory",
+    "记忆": "memory",
+    observation: "observation",
+    "观察": "observation",
+    learning: "learning",
+    "学习": "learning",
+    perception: "perception",
+    "感知": "perception",
+    charisma: "charisma",
+    "魅力": "charisma"
+};
+
 const DEFAULT_STATE = () => ({
     version: 1,
     dataSchemaVersion: 2,
@@ -58,11 +85,21 @@ const DEFAULT_STATE = () => ({
         name: "", age: null, gender: "", identity: "",
         description: "", personality: "", background: "", appearance: "",
         body: { strength: 10, speed: 10, constitution: 10, stamina: 10, agility: 10 },
-        mind: { iq: 100, memory: 10, observation: 10, learning: 10 },
+        mind: {
+            iq: 100,
+            memory: 10,
+            observation: 10,
+            learning: 10,
+            intelligence: 10,
+            perception: 10,
+            charisma: 10
+        },
         abilities: [], buffs: [],
         importMeta: {
             manualEdited: false,
             initialized: false,
+            personaInitialized: false,
+            personaVersion: 2,
             aiCharacterName: "",
             userPersonaName: "",
             importedAt: ""
@@ -76,7 +113,6 @@ const DEFAULT_STATE = () => ({
     logs: [],
     settings: { showChatNotice: true, autoAcceptAiActions: false },
     profileSources: {
-        aiCharacter: null,
         userPersona: null,
         updatedAt: ""
     }
@@ -159,7 +195,7 @@ function cloneData(value) {
 function migrateProfile(source = {}) {
     const defaults = DEFAULT_STATE().profile;
     const profile = source && typeof source === "object" ? source : {};
-    return {
+    const migrated = {
         ...defaults,
         ...profile,
         body: { ...defaults.body, ...(profile.body || {}) },
@@ -171,6 +207,16 @@ function migrateProfile(source = {}) {
             ...(profile.importMeta || {})
         }
     };
+    if (!migrated.importMeta.manualEdited && !migrated.importMeta.personaInitialized
+        && migrated.importMeta.personaVersion !== 2) {
+        migrated.description = "";
+        migrated.personality = "";
+        migrated.background = "";
+        migrated.appearance = "";
+    }
+    migrated.importMeta.personaVersion = 2;
+    migrated.importMeta.personaInitialized = Boolean(migrated.importMeta.personaInitialized);
+    return migrated;
 }
 
 function migrateSystemBucket(source = {}, rootState = null) {
@@ -338,89 +384,135 @@ function migrate(s) {
     return merged;
 }
 
-function getAiCharacterSnapshot(context = ctx()) {
-    if (!context) return null;
-    let fields = {};
-    try {
-        if (typeof context.getCharacterCardFields === "function") {
-            fields = context.getCharacterCardFields() || {};
+function parseListValue(value) {
+    return [...new Set(String(value || "")
+        .replace(/^\[|\]$/g, "")
+        .split(/[,，、;；|\n]/)
+        .map(item => item.trim())
+        .filter(item => item && item.length <= 80))]
+        .slice(0, 30);
+}
+
+function parsePersonaAttributes(text) {
+    const attributes = {};
+    const aliasPattern = Object.keys(PERSONA_ATTRIBUTE_ALIASES)
+        .sort((a, b) => b.length - a.length)
+        .map(alias => alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join("|");
+    const pattern = new RegExp(`(?:^|[\\s,，、;；|:：])(${aliasPattern})\\s*(?:[:：=]\\s*|\\s+)(-?\\d+(?:\\.\\d+)?)`, "gi");
+    let match;
+    while ((match = pattern.exec(text))) {
+        const alias = match[1];
+        if (!alias) continue;
+        const value = Number(match[2]);
+        if (Number.isFinite(value)) {
+            const key = PERSONA_ATTRIBUTE_ALIASES[alias] || PERSONA_ATTRIBUTE_ALIASES[alias.toLowerCase()];
+            if (key) attributes[key] = value;
         }
-    } catch (error) {
-        reportError("getCharacterCardFields", error);
     }
-    const characterId = context.characterId;
-    const character = characterId !== undefined && characterId !== null
-        ? context.characters?.[characterId]
-        : null;
-    const appearance = [
-        character?.appearance,
-        character?.data?.appearance,
-        character?.data?.extensions?.appearance
-    ].find(value => typeof value === "string" && value.trim());
-    const snapshot = {
-        name: String(character?.name || "").trim(),
-        description: String(fields.description || character?.description || "").trim(),
-        personality: String(fields.personality || character?.personality || "").trim(),
-        scenario: String(fields.scenario || character?.scenario || "").trim(),
-        appearance: String(appearance || "").trim(),
-        creatorNotes: String(fields.creatorNotes || character?.data?.creator_notes || "").trim(),
-        sourceType: "ai-character-card",
-        updatedAt: new Date().toISOString()
+    return attributes;
+}
+
+function parseUserPersonaFields(description) {
+    const text = String(description || "")
+        .replace(/\\r\\n|\\n|\\r/g, "\n")
+        .replace(/\r/g, "");
+    const fields = {
+        gender: "",
+        age: "",
+        height: "",
+        constitution: "",
+        attributes: parsePersonaAttributes(text),
+        buffs: [],
+        abilities: []
     };
-    snapshot.available = Boolean(snapshot.name || snapshot.description || snapshot.personality || snapshot.scenario || snapshot.appearance);
-    return snapshot;
+    const labels = {
+        gender: ["性别", "gender", "sex"],
+        age: ["年龄", "age"],
+        height: ["身高", "height"],
+        constitution: ["体质", "constitution"],
+        buffs: ["buff", "buffs", "增益", "状态"],
+        abilities: ["能力", "技能", "abilities", "ability", "skills"]
+    };
+    const allLabels = Object.values(labels).flat()
+        .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join("|");
+    const segments = text.split(new RegExp(`\\n|(?=(?:${allLabels})\\s*[:：])`, "i"));
+    for (const segment of segments) {
+        const match = segment.match(/^\s*(?:[-*•]\s*)?([^:：]{1,20})\s*[:：]\s*([\s\S]*)$/);
+        if (!match) continue;
+        const label = match[1].trim().toLowerCase();
+        const value = match[2].trim();
+        for (const [field, aliases] of Object.entries(labels)) {
+            if (!aliases.some(alias => alias.toLowerCase() === label)) continue;
+            if (["buffs", "abilities"].includes(field)) fields[field] = parseListValue(value);
+            else fields[field] = value;
+            break;
+        }
+    }
+    if (!fields.attributes.constitution && /^\d+(?:\.\d+)?$/.test(fields.constitution)) {
+        fields.attributes.constitution = Number(fields.constitution);
+    }
+    return fields;
 }
 
 function getUserPersonaSnapshot(context = ctx()) {
     if (!context) return null;
     const powerUser = context.powerUserSettings || {};
-    const activeName = String(context.name1 || "").trim();
     const personas = powerUser.personas && typeof powerUser.personas === "object" ? powerUser.personas : {};
     const descriptions = powerUser.persona_descriptions && typeof powerUser.persona_descriptions === "object"
         ? powerUser.persona_descriptions
         : {};
-    const activeAvatar = Object.keys(personas).find(avatar => String(personas[avatar]) === activeName);
+    const chatPersona = String(context.chatMetadata?.persona || "").trim();
+    const nameMatchedAvatar = Object.keys(personas)
+        .find(avatar => String(personas[avatar]) === String(context.name1 || "").trim());
+    const personaKey = chatPersona || nameMatchedAvatar || "";
     const description = String(
         powerUser.persona_description
-        || descriptions[activeAvatar]?.description
+        || descriptions[personaKey]?.description
         || ""
     ).trim();
-    const snapshot = {
-        name: activeName,
-        description,
+    const configured = Boolean(description || (personaKey && (personas[personaKey] || descriptions[personaKey])));
+    const fields = parseUserPersonaFields(description);
+    return {
+        configured,
+        personaKey,
+        fields,
         sourceType: "user-persona",
         updatedAt: new Date().toISOString()
     };
-    snapshot.available = Boolean(snapshot.name || snapshot.description);
-    return snapshot;
 }
 
-function importProfileSources(bucket, force = false) {
+function importProfileSources(bucket) {
     if (!bucket?.profile) return;
-    const aiCharacter = getAiCharacterSnapshot();
-    const userPersona = getUserPersonaSnapshot();
+    const persona = getUserPersonaSnapshot();
     bucket.profileSources = {
-        aiCharacter,
-        userPersona,
+        ...(bucket.profileSources || {}),
+        userPersona: persona,
         updatedAt: new Date().toISOString()
     };
+    if (!persona?.configured) return;
     const profile = bucket.profile;
-    if (!force && (profile.importMeta?.manualEdited || profile.importMeta?.initialized)) return;
-    if (!aiCharacter?.available) return;
-    const imports = [
-        ["description", aiCharacter.description],
-        ["personality", aiCharacter.personality],
-        ["background", aiCharacter.scenario],
-        ["appearance", aiCharacter.appearance]
-    ];
-    for (const [field, value] of imports) {
-        if (!String(profile[field] || "").trim() && value) profile[field] = value;
+    if (profile.importMeta?.manualEdited || profile.importMeta?.personaInitialized) return;
+    const defaults = DEFAULT_STATE().profile;
+    for (const [key, value] of Object.entries(persona.fields.attributes)) {
+        if (key in profile.body && profile.body[key] === defaults.body[key]) {
+            profile.body[key] = value;
+        } else if (key in profile.mind && profile.mind[key] === defaults.mind[key]) {
+            profile.mind[key] = value;
+        }
+    }
+    if (!profile.abilities.length && persona.fields.abilities.length) {
+        profile.abilities = [...persona.fields.abilities];
+    }
+    if (!profile.buffs.length && persona.fields.buffs.length) {
+        profile.buffs = [...persona.fields.buffs];
     }
     profile.importMeta = {
         ...profile.importMeta,
         initialized: true,
-        aiCharacterName: aiCharacter.name,
-        userPersonaName: userPersona?.name || "",
+        personaInitialized: true,
+        personaVersion: 2,
         importedAt: new Date().toISOString()
     };
 }
@@ -532,6 +624,7 @@ function installPrompt() {
             currency: bucket.currency,
             attributePoints: bucket.attributePoints,
             profile: bucket.profile,
+            userPersona: bucket.profileSources?.userPersona?.fields || null,
             tasks: bucket.tasks.map(task => ({
                 id: task.id,
                 title: task.title,
@@ -684,19 +777,13 @@ function renderSelection(s) {
           <div class="sf-section-heading"><div><h3>可用系统</h3><p class="sf-muted">点击卡片选择。可单系统运行，也可组合多个系统。</p></div>
           <div class="sf-segment"><button id="sf-mode-single" class="${selectionMode === "single" ? "active" : ""}">单选</button><button id="sf-mode-multi" class="${selectionMode === "multi" ? "active" : ""}">多选</button></div></div>
           ${systemCards(s)}
+          <button id="sf-open-custom-create" type="button" class="sf-custom-entry"><span class="sf-system-mark"><i class="fa-solid fa-plus"></i></span><span><b>自定义系统</b><small>创建新的系统名称、简介和支持功能</small></span><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>
+          <div class="sf-selection-setting"><label>商城价格档位 <select id="sf-difficulty"><option value="easy" ${s.difficulty === "easy" ? "selected" : ""}>简单（低价）</option><option value="normal" ${s.difficulty === "normal" ? "selected" : ""}>正常</option><option value="hell" ${s.difficulty === "hell" ? "selected" : ""}>地狱级（高价）</option></select></label></div>
           <div class="sf-selection-actions">
             <button id="sf-random-one"><i class="fa-solid fa-shuffle"></i> 随机一个</button>
             <button id="sf-random-many"><i class="fa-solid fa-shuffle"></i> 随机两个</button>
             <button id="sf-confirm-selection" class="sf-primary sf-confirm-button">确认选择 / 进入系统</button>
           </div>
-        </section>
-        <section class="sf-card">
-          <h3>自定义系统</h3>
-          <div class="sf-form"><input id="sf-custom-name" placeholder="系统名称"><textarea id="sf-custom-desc" placeholder="系统背景、规则、任务机制、特殊能力等"></textarea>
-          <label class="sf-inline"><input id="sf-custom-shop" type="checkbox" checked>拥有系统商城</label>
-          <label>商城价格档位 <select id="sf-difficulty"><option value="easy" ${s.difficulty === "easy" ? "selected" : ""}>简单（低价）</option><option value="normal" ${s.difficulty === "normal" ? "selected" : ""}>正常</option><option value="hell" ${s.difficulty === "hell" ? "selected" : ""}>地狱级（高价）</option></select></label>
-          <button id="sf-create-custom" class="sf-primary">创建并选择新系统</button></div>
-          <div class="sf-chip-list">${s.customSystems.map(x => `<span class="sf-chip">${esc(x.name)}</span>`).join("") || '<span class="sf-muted">尚无自定义系统</span>'}</div>
         </section>
         <div class="sf-footer"><span>◆</span> 选择页不修改现有任务、积分、背包或日志 <span>◆</span></div>
       </div>`;
@@ -748,6 +835,10 @@ function renderSelection(s) {
     };
     panel.querySelector("#sf-random-one").onclick = () => randomizeSelection(s, 1);
     panel.querySelector("#sf-random-many").onclick = () => randomizeSelection(s, 2);
+    panel.querySelector("#sf-open-custom-create").onclick = () => {
+        uiView = "custom-create";
+        render();
+    };
     panel.querySelector("#sf-confirm-selection").onclick = async () => {
         const chosen = [...new Set(selectionDraft)];
         if (!chosen.length) return notify("请至少选择一个系统。", "warning");
@@ -769,20 +860,58 @@ function renderSelection(s) {
         await save();
         notify("系统选择已确认。");
     };
-    panel.querySelector("#sf-create-custom").onclick = async () => {
+}
+
+function renderCustomCreate(s) {
+    const featureOptions = [
+        ["tasks", "任务"],
+        ["profile", "角色资料"],
+        ["shop", "商城"],
+        ["bag", "背包"],
+        ["logs", "日志"]
+    ];
+    panel.innerHTML = `
+      <div class="sf-page sf-custom-create-page">
+        <div class="sf-header"><div><div class="sf-eyebrow">SYSTEM FLOW · CUSTOM SYSTEM</div><h2>创建自定义系统</h2><small>创建完成后返回系统选择页，并保留原有选择</small></div><button id="sf-custom-close" class="sf-icon-button" aria-label="关闭">×</button></div>
+        <div class="sf-card sf-custom-dialog" role="dialog" aria-modal="true" aria-label="创建自定义系统">
+          <div class="sf-form">
+            <label>系统名称<input id="sf-custom-name" maxlength="80" placeholder="例如：炼金术系统"></label>
+            <label>系统简介<textarea id="sf-custom-desc" maxlength="1200" placeholder="系统规则、机制与特殊能力"></textarea></label>
+            <fieldset class="sf-feature-fieldset"><legend>支持的功能</legend>${featureOptions.map(([value, label]) => `<label class="sf-inline"><input class="sf-custom-feature" type="checkbox" value="${value}" ${value === "tasks" ? "checked" : ""}>${label}</label>`).join("")}</fieldset>
+          </div>
+          <div class="sf-custom-actions"><button id="sf-custom-cancel">取消</button><button id="sf-custom-create" class="sf-primary">确认创建</button></div>
+        </div>
+      </div>`;
+    const close = () => {
+        uiView = "selection";
+        render();
+    };
+    panel.querySelector("#sf-custom-close").onclick = close;
+    panel.querySelector("#sf-custom-cancel").onclick = close;
+    panel.querySelector("#sf-custom-create").onclick = async () => {
         const name = panel.querySelector("#sf-custom-name").value.trim();
         const description = panel.querySelector("#sf-custom-desc").value.trim();
-        if (!name || !description) return notify("请填写系统名称和设定。", "warning");
-        const shop = panel.querySelector("#sf-custom-shop").checked;
-        const features = DEFAULT_SYSTEM_FEATURES.filter(feature => shop || !["shop", "bag"].includes(feature));
-        const custom = { id: `custom_${id()}`, name, description, shop, features, builtin: false };
+        const features = [...panel.querySelectorAll(".sf-custom-feature")]
+            .filter(input => input.checked || input.hasAttribute("checked"))
+            .map(input => input.value);
+        if (!name) return notify("请填写系统名称。", "warning");
+        if (!description) return notify("请填写系统简介。", "warning");
+        if (!features.length) return notify("请至少选择一个支持功能。", "warning");
         const current = state();
         if (!current) return notify("当前聊天存档不可用。", "error");
+        const custom = {
+            id: `custom_${id()}`,
+            name,
+            description,
+            shop: features.includes("shop"),
+            features,
+            builtin: false
+        };
         current.customSystems.push(custom);
-        current.difficulty = panel.querySelector("#sf-difficulty").value || current.difficulty;
         selectionDraft = [...new Set([...selectionDraft, custom.id])];
+        uiView = "selection";
         await save();
-        notify("自定义系统已加入并选中。");
+        notify("自定义系统已创建并选中。");
     };
 }
 
@@ -825,7 +954,7 @@ function renderManagement(s) {
     panel.innerHTML = `
       <div class="sf-page sf-management-page">
         <div class="sf-header"><div><div class="sf-eyebrow">SYSTEM FLOW · ACTIVE CONTROL</div><h2>${esc(system.name)}</h2><small>${s.systems.length > 1 ? `多系统组合：${esc(activeNames(s).join(" / "))}` : "当前系统独立存档"}</small></div><span class="sf-status on">运行中</span></div>
-        <div class="sf-management-toolbar"><button id="sf-back-selection"><i class="fa-solid fa-arrow-left"></i> 返回系统选择</button><div class="sf-mini-stats"><span>${esc(bucket.currencyName)} <b>${bucket.currency}</b></span><span>属性点 <b>${bucket.attributePoints}</b></span><span>任务 <b>${bucket.tasks.length}</b></span></div></div>
+        <div class="sf-management-toolbar"><button id="sf-back-selection"><i class="fa-solid fa-arrow-left"></i> 更换 / 返回系统</button><div class="sf-mini-stats"><span>${esc(bucket.currencyName)} <b>${bucket.currency}</b></span><span>属性点 <b>${bucket.attributePoints}</b></span><span>任务 <b>${bucket.tasks.length}</b></span></div></div>
         ${systemSwitches}
         <div class="sf-card sf-system-brief"><h3>系统规则摘要</h3><p>${esc(system.description)}</p><small>可用模块：${esc(systemFeatureText(system))}</small></div>
         <div class="sf-tabs">${tabs}</div>
@@ -875,45 +1004,40 @@ function render() {
         });
         return;
     }
-    if (uiView === "management" && s.systems.length) renderManagement(s);
+    if (uiView === "custom-create") renderCustomCreate(s);
+    else if (uiView === "management" && s.systems.length) renderManagement(s);
     else renderSelection(s);
 }
-function sourceCard(title, source, fields) {
-    if (!source?.available) {
-        return `<article class="sf-source-card"><small>${title}</small><b>未检测到可用资料</b><p>不显示或编造缺失字段。</p></article>`;
-    }
-    return `<article class="sf-source-card"><small>${title}</small><b>${esc(source.name || "未提供名称")}</b>${fields.map(([label, value]) => value ? `<p><span>${label}</span>${esc(value)}</p>` : "").join("")}</article>`;
-}
-
 function profileEditor(bucket) {
     const profile = bucket.profile;
-    const ai = bucket.profileSources?.aiCharacter;
     const persona = bucket.profileSources?.userPersona;
+    const fields = persona?.fields || {};
+    const attributeText = Object.entries(fields.attributes || {})
+        .map(([key, value]) => `${attributeLabel(key)} ${value}`)
+        .join(" · ");
+    const personaRows = [
+        ["性别", fields.gender],
+        ["年龄", fields.age],
+        ["身高", fields.height],
+        ["体质", fields.constitution],
+        ["数值属性", attributeText],
+        ["Buff", fields.buffs?.join("、")],
+        ["能力", fields.abilities?.join("、")]
+    ];
     return `<div class="sf-card">
-      <div class="sf-section-heading"><div><h3>系统角色资料</h3><p class="sf-muted">AI 角色卡、用户 Persona 与插件内部资料严格分开显示。</p></div><button id="sf-import-profile" class="sf-secondary">补全空白资料</button></div>
-      <div class="sf-source-grid">
-        ${sourceCard("AI 当前角色卡", ai, [["描述", ai?.description], ["性格", ai?.personality], ["场景", ai?.scenario], ["外貌", ai?.appearance]])}
-        ${sourceCard("用户 Persona", persona, [["Persona 描述", persona?.description]])}
-        <article class="sf-source-card"><small>插件内部角色资料</small><b>${esc(profile.name || "尚未填写姓名")}</b><p>${profile.importMeta?.manualEdited ? "已由用户手动编辑，自动读取不会覆盖。" : "空白字段可由当前角色卡初始化。"}</p></article>
-      </div>
+      <div class="sf-section-heading"><div><h3>当前 User Persona</h3><p class="sf-muted">只读取当前用户 Persona 中明确标注的字段；不读取 AI 角色卡或长篇自由描述。</p></div><button id="sf-refresh-persona" class="sf-secondary">刷新资料</button></div>
+      ${persona?.configured ? `<div class="sf-persona-fields">${personaRows.map(([label, value]) => `<div class="${value ? "" : "is-missing"}"><small>${label}</small><b>${esc(value || "未提供")}</b></div>`).join("")}</div>` : '<div class="sf-empty"><b>User Persona 尚未设置</b><p>请在 SillyTavern 的 Persona 管理中选择用户 Persona。插件不会生成或猜测角色资料。</p></div>'}
       <div class="sf-stats"><div><small>${esc(bucket.currencyName)}</small><b>${bucket.currency}</b></div><div><small>可用属性点</small><b>${bucket.attributePoints}</b></div></div>
-      <div class="sf-form sf-profile-form">
-        <label>姓名<input id="sf-name" placeholder="姓名" value="${esc(profile.name)}"></label>
-        <label>年龄<input id="sf-age" type="number" min="0" placeholder="年龄" value="${esc(profile.age ?? "")}"></label>
-        <label>性别<input id="sf-gender" placeholder="性别" value="${esc(profile.gender)}"></label>
-        <label>身份<input id="sf-identity" placeholder="身份" value="${esc(profile.identity)}"></label>
-        <label>描述<textarea id="sf-description" placeholder="系统角色描述">${esc(profile.description)}</textarea></label>
-        <label>性格<textarea id="sf-personality" placeholder="性格">${esc(profile.personality)}</textarea></label>
-        <label>背景<textarea id="sf-background" placeholder="背景与当前场景">${esc(profile.background)}</textarea></label>
-        <label>外貌<textarea id="sf-appearance" placeholder="外貌；角色卡未提供时保持空白">${esc(profile.appearance)}</textarea></label>
-        <button id="sf-save-profile" class="sf-primary">保存资料</button>
-      </div>
-      <h4>身体属性</h4>${Object.entries(profile.body).map(([key, value]) => attrRow(key, value)).join("")}
-      <h4>智力属性</h4>${Object.entries(profile.mind).map(([key, value]) => attrRow(key, value)).join("")}
+      <h4>系统成长数值</h4><p class="sf-muted">这些数值属于插件系统成长，Persona 首次读取只补默认值，之后不会覆盖已有成长。</p>
+      <h4>身体</h4>${Object.entries(profile.body).map(([key, value]) => attrRow(key, value)).join("")}
+      <h4>智力</h4>${Object.entries(profile.mind).map(([key, value]) => attrRow(key, value)).join("")}
       <div class="sf-form sf-attribute-form"><label>属性类别<select id="sf-attr-kind"><option value="body">身体</option><option value="mind">智力</option></select></label>
       <label>属性<select id="sf-attr-key">${Object.keys(profile.body).map(key => `<option value="${key}">身体 · ${attributeLabel(key)}</option>`).join("")}${Object.keys(profile.mind).map(key => `<option value="${key}">智力 · ${attributeLabel(key)}</option>`).join("")}</select></label>
       <label>增加点数<input id="sf-attr-points" type="number" min="1" value="1"></label><button id="sf-add-attr" class="sf-primary">消耗属性点加点</button></div>
-      <h4>能力与 BUFF</h4><p>${[...profile.abilities, ...profile.buffs].map(esc).join("、") || "暂无"}</p>
+      <h4>系统能力</h4><div class="sf-chip-list">${profile.abilities.map(item => `<span class="sf-chip">${esc(item)}</span>`).join("") || '<span class="sf-muted">暂无能力</span>'}</div>
+      <div class="sf-row"><button id="sf-add-ability">＋ 添加能力</button><button id="sf-remove-ability">移除能力</button></div>
+      <h4>系统 Buff</h4><div class="sf-chip-list">${profile.buffs.map(item => `<span class="sf-chip">${esc(item)}</span>`).join("") || '<span class="sf-muted">暂无 Buff</span>'}</div>
+      <div class="sf-row"><button id="sf-add-buff">＋ 添加 Buff</button><button id="sf-remove-buff">移除 Buff</button></div>
     </div>`;
 }
 
@@ -971,32 +1095,51 @@ function bindTab(bucket, tab, system, root) {
         });
     }
     if (tab === "profile") {
-        box.querySelector("#sf-import-profile")?.addEventListener("click", async () => {
+        box.querySelector("#sf-refresh-persona")?.addEventListener("click", async () => {
             const current = freshBucket();
             if (!current) return;
-            importProfileSources(current, true);
+            importProfileSources(current);
             await save();
-            notify("已用当前角色卡补全空白资料；非空字段保持不变。");
+            notify("已刷新当前 User Persona 资料。");
         });
-        box.querySelector("#sf-save-profile").onclick = async () => {
+        box.querySelector("#sf-add-ability")?.addEventListener("click", async () => {
             const current = freshBucket();
             if (!current) return;
-            current.profile.name = box.querySelector("#sf-name").value;
-            current.profile.age = box.querySelector("#sf-age").value === "" ? null : Number(box.querySelector("#sf-age").value);
-            current.profile.gender = box.querySelector("#sf-gender").value;
-            current.profile.identity = box.querySelector("#sf-identity").value;
-            current.profile.description = box.querySelector("#sf-description").value;
-            current.profile.personality = box.querySelector("#sf-personality").value;
-            current.profile.background = box.querySelector("#sf-background").value;
-            current.profile.appearance = box.querySelector("#sf-appearance").value;
-            current.profile.importMeta = {
-                ...current.profile.importMeta,
-                manualEdited: true,
-                aiCharacterName: current.profileSources?.aiCharacter?.name || "",
-                userPersonaName: current.profileSources?.userPersona?.name || ""
-            };
+            const value = String(prompt("能力名称？") || "").trim();
+            if (!value) return;
+            if (!current.profile.abilities.includes(value)) current.profile.abilities.push(value);
+            current.profile.importMeta.manualEdited = true;
             await save();
-        };
+        });
+        box.querySelector("#sf-remove-ability")?.addEventListener("click", async () => {
+            const current = freshBucket();
+            if (!current) return;
+            if (!current.profile.abilities.length) return notify("当前没有可移除的能力。", "info");
+            const value = String(prompt(`要移除的能力：\n${current.profile.abilities.join("、")}`) || "").trim();
+            if (!value) return;
+            current.profile.abilities = current.profile.abilities.filter(item => item !== value);
+            current.profile.importMeta.manualEdited = true;
+            await save();
+        });
+        box.querySelector("#sf-add-buff")?.addEventListener("click", async () => {
+            const current = freshBucket();
+            if (!current) return;
+            const value = String(prompt("Buff 名称？") || "").trim();
+            if (!value) return;
+            if (!current.profile.buffs.includes(value)) current.profile.buffs.push(value);
+            current.profile.importMeta.manualEdited = true;
+            await save();
+        });
+        box.querySelector("#sf-remove-buff")?.addEventListener("click", async () => {
+            const current = freshBucket();
+            if (!current) return;
+            if (!current.profile.buffs.length) return notify("当前没有可移除的 Buff。", "info");
+            const value = String(prompt(`要移除的 Buff：\n${current.profile.buffs.join("、")}`) || "").trim();
+            if (!value) return;
+            current.profile.buffs = current.profile.buffs.filter(item => item !== value);
+            current.profile.importMeta.manualEdited = true;
+            await save();
+        });
         box.querySelector("#sf-add-attr").onclick = async () => {
             const current = freshBucket();
             if (!current) return;
@@ -1008,6 +1151,7 @@ function bindTab(bucket, tab, system, root) {
             if (!(key in current.profile[kind])) return;
             current.attributePoints -= points;
             current.profile[kind][key] += points;
+            current.profile.importMeta.manualEdited = true;
             addLog(current, `${attributeLabel(kind)}属性「${attributeLabel(key)}」增加 ${points} 点`);
             await save();
         };
@@ -1319,6 +1463,7 @@ function onChatChanged() {
     lastProcessedMessageKey = "";
     const s = state();
     selectionDraft = s?.systems ? [...s.systems] : [];
+    if (uiView === "custom-create") uiView = "selection";
     if (uiView === "management") ensureManagementSystem(s);
     mountLaunchEntries();
     const modal = document.querySelector("#sf-modal");
@@ -1382,6 +1527,14 @@ function onGenerationEnded() {
     refreshPrompt();
     updateSettingsStatus();
 }
+
+function onPersonaChanged() {
+    const modal = document.querySelector("#sf-modal");
+    if (modal?.classList.contains("open")) render();
+    refreshPrompt();
+    updateSettingsStatus();
+}
+
 function extractMessageText(data, seen = new WeakSet(), depth = 0) {
     if (typeof data === "string") return data;
     if (!data || typeof data !== "object" || depth > 8 || seen.has(data)) return "";
@@ -1447,6 +1600,8 @@ function init(force = false) {
         registerListener("CHAT_CHANGED", onChatChanged);
         registerListener("MESSAGE_RECEIVED", onMessageReceived);
         registerListener("GENERATION_ENDED", onGenerationEnded);
+        registerListener("PERSONA_CHANGED", onPersonaChanged);
+        registerListener("PERSONA_UPDATED", onPersonaChanged);
 
         if (!keyboardHandler) {
             keyboardHandler = event => {

@@ -3,6 +3,9 @@ import { eventSource, event_types } from "../../../../script.js";
 const EXT = "system_flow";
 const META_KEY = "system_flow_v1";
 const LOG_PREFIX = "[System Flow]";
+const PLUGIN_VERSION = "0.1.4";
+const WAND_ENTRY_ID = "system_flow_wand_entry";
+const SETTINGS_DRAWER_ID = "system-flow-settings";
 
 const BUILTIN_SYSTEMS = [
     ["roleplay","扮演角色系统","身份、角色背景、能力与扮演任务",true],
@@ -42,20 +45,65 @@ const DEFAULT_STATE = () => ({
     settings: { showChatNotice: true, autoAcceptAiActions: false }
 });
 
-let panel, promptTimer, keyboardHandler;
+let panel, promptTimer, keyboardHandler, entryObserver, entryObserverTimer, bootstrapTimer;
 let activeTab = "tasks";
 let initialized = false;
+let bootstrapAttempts = 0;
 let contextErrorReported = false;
+let promptErrorReported = false;
 let lastProcessedMessageKey = "";
-const registeredListeners = [];
+const registeredListeners = new Map();
+
+const diagnostics = {
+    version: PLUGIN_VERSION,
+    initialized: false,
+    appReady: false,
+    context: false,
+    chatMetadata: false,
+    saveMetadata: false,
+    extensionPrompt: false,
+    entries: {
+        floating: false,
+        wand: false,
+        settings: false
+    },
+    events: {},
+    lastOpenedFrom: "",
+    lastSavedAt: "",
+    lastError: ""
+};
+
+function reportError(scope, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    diagnostics.lastError = `${scope}: ${message}`;
+    console.error(`${LOG_PREFIX} ${scope}:`, error);
+    updateSettingsStatus();
+}
+
+function diagnosticSummary() {
+    return JSON.stringify(diagnostics, null, 2);
+}
 
 function ctx() {
-    const context = globalThis.SillyTavern?.getContext?.();
-    if (!context && !contextErrorReported) {
-        contextErrorReported = true;
-        console.error(`${LOG_PREFIX} SillyTavern.getContext() is unavailable. The extension UI was not mounted.`);
+    try {
+        const context = globalThis.SillyTavern?.getContext?.();
+        diagnostics.context = Boolean(context);
+        diagnostics.chatMetadata = Boolean(context?.chatMetadata && typeof context.chatMetadata === "object");
+        diagnostics.saveMetadata = typeof context?.saveMetadata === "function";
+        diagnostics.extensionPrompt = typeof context?.setExtensionPrompt === "function";
+        if (!context && !contextErrorReported) {
+            contextErrorReported = true;
+            reportError("getContext", new Error("SillyTavern.getContext() is unavailable."));
+        }
+        return context ?? null;
+    } catch (error) {
+        diagnostics.context = false;
+        if (!contextErrorReported) {
+            contextErrorReported = true;
+            reportError("getContext", error);
+        }
+        return null;
     }
-    return context ?? null;
 }
 function currentChatKey(c = ctx()) {
     if (!c) return null;
@@ -123,16 +171,19 @@ function migrate(s) {
 async function save() {
     const c = ctx();
     if (!c?.saveMetadata) {
-        console.error(`${LOG_PREFIX} Cannot save chat metadata: saveMetadata() is unavailable.`);
+        diagnostics.saveMetadata = false;
+        reportError("saveMetadata", new Error("saveMetadata() is unavailable; changes remain in the current panel session only."));
         return;
     }
     try {
         await c.saveMetadata();
+        diagnostics.lastSavedAt = new Date().toLocaleString();
     } catch (error) {
-        console.error(`${LOG_PREFIX} Failed to save chat metadata.`, error);
+        reportError("saveMetadata", error);
     }
     render();
     refreshPrompt();
+    updateSettingsStatus();
 }
 function notify(msg, type="success") {
     if (window.toastr?.[type]) window.toastr[type](msg, "System Flow");
@@ -164,9 +215,14 @@ function ensureActive(s) {
 function installPrompt() {
     const c = ctx();
     if (!c?.setExtensionPrompt) {
-        console.error(`${LOG_PREFIX} Cannot install the extension prompt: setExtensionPrompt() is unavailable.`);
+        diagnostics.extensionPrompt = false;
+        if (!promptErrorReported) {
+            promptErrorReported = true;
+            reportError("setExtensionPrompt", new Error("Prompt injection is unavailable; the management UI remains usable."));
+        }
         return;
     }
+    diagnostics.extensionPrompt = true;
     const s = state();
     if (!s?.active) {
         c.setExtensionPrompt(EXT, "", 1, 0, false);
@@ -266,7 +322,19 @@ function render() {
     if (!panel) return;
     const s = state();
     if (!s) {
-        panel.innerHTML = `<div class="sf-empty">请先打开一个聊天记录，再使用系统流插件。</div>`;
+        const message = diagnostics.context
+            ? "当前没有可用的聊天存档。请打开一个聊天，或重新初始化插件。"
+            : "SillyTavern 上下文暂不可用。插件入口会保留，可在扩展设置中查看诊断信息。";
+        panel.innerHTML = `
+          <div class="sf-header"><div><div class="sf-eyebrow">SYSTEM FLOW · DIAGNOSTICS</div><h2>万界系统管理局</h2><small>界面已保留，数据操作等待上下文恢复</small></div><span class="sf-status">等待连接</span></div>
+          <div class="sf-card"><h3>暂时无法读取聊天存档</h3><p class="sf-muted">${esc(message)}</p>
+          <pre class="sf-diagnostics">${esc(diagnosticSummary())}</pre>
+          <div class="sf-row"><button id="sf-retry-init" class="sf-primary">重新检测插件状态</button></div></div>`;
+        panel.querySelector("#sf-retry-init")?.addEventListener("click", () => {
+            init(true);
+            render();
+            updateSettingsStatus();
+        });
         return;
     }
     const active = s.active && s.systems.length;
@@ -404,7 +472,17 @@ function setModalOpen(open) {
     modal.setAttribute("aria-hidden", String(!open));
     document.querySelector("#sf-fab")?.setAttribute("aria-expanded", String(open));
     if (open) render();
+    updateSettingsStatus();
     return open;
+}
+
+function openManager(source = "unknown") {
+    diagnostics.lastOpenedFrom = source;
+    if (!mount()) {
+        reportError("openManager", new Error("The management shell could not be mounted."));
+        return false;
+    }
+    return setModalOpen(true);
 }
 
 function mount() {
@@ -413,13 +491,16 @@ function mount() {
         && root.querySelector("#sf-modal")
         && root.querySelector("#sf-panel")
         && root.querySelector("#sf-close")
-        && root.querySelector("[data-sf-close]");
+        && root.querySelector("[data-sf-close]")
+        && root.dataset.sfVersion === PLUGIN_VERSION;
     if (root && !isComplete) {
         root.remove();
         root = null;
     }
     if (root) {
         panel = root.querySelector("#sf-panel");
+        diagnostics.entries.floating = true;
+        mountLaunchEntries();
         return true;
     }
     if (!document.body) return false;
@@ -427,6 +508,7 @@ function mount() {
     root = document.createElement("div");
     root.id = "system-flow-root";
     root.className = "sf-root";
+    root.dataset.sfVersion = PLUGIN_VERSION;
     root.innerHTML = `
       <button id="sf-fab" type="button" aria-label="打开万界系统管理局" aria-controls="sf-modal" aria-expanded="false" title="万界系统管理局">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.2 6.1 17.9 9.8M4 20l4.7-1 10.9-10.9a2.6 2.6 0 0 0-3.7-3.7L5 15.3 4 20Z"/><path d="m13 7.3 3.7 3.7M4 20l4.1-.9"/></svg>
@@ -448,16 +530,205 @@ function mount() {
 
     panel = root.querySelector("#sf-panel");
     document.body.appendChild(root);
+    diagnostics.entries.floating = true;
     render();
+    mountLaunchEntries();
+    updateSettingsStatus();
     return true;
+}
+
+function mountWandEntry() {
+    const menu = document.querySelector("#extensionsMenu");
+    if (!menu) {
+        diagnostics.entries.wand = false;
+        return false;
+    }
+
+    let entry = document.querySelector(`#${WAND_ENTRY_ID}`);
+    if (entry && entry.parentElement !== menu) {
+        entry.remove();
+        entry = null;
+    }
+    if (!entry) {
+        entry = document.createElement("div");
+        entry.id = WAND_ENTRY_ID;
+        entry.className = "list-group-item flex-container flexGap5 interactable";
+        entry.setAttribute("role", "button");
+        entry.setAttribute("tabindex", "0");
+        entry.setAttribute("aria-label", "打开万界系统管理局");
+        entry.innerHTML = `
+          <i class="fa-solid fa-paintbrush extensionsMenuExtensionButton" aria-hidden="true"></i>
+          <span>万界系统管理局</span>`;
+        menu.append(entry);
+    }
+    if (entry.dataset.sfBound !== PLUGIN_VERSION) {
+        entry.dataset.sfBound = PLUGIN_VERSION;
+        entry.addEventListener("click", () => openManager("wand-menu"));
+        entry.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openManager("wand-menu");
+            }
+        });
+    }
+    diagnostics.entries.wand = true;
+    return true;
+}
+
+function mountSettingsEntry() {
+    let drawer = document.querySelector(`#${SETTINGS_DRAWER_ID}`);
+    const container = document.querySelector("#extensions_settings2")
+        ?? document.querySelector("#extensions_settings");
+
+    if (drawer && drawer.dataset.sfVersion !== PLUGIN_VERSION) {
+        drawer.remove();
+        drawer = null;
+    }
+    if (drawer && container && drawer.parentElement !== container) {
+        container.append(drawer);
+    }
+    if (!drawer) {
+        if (!container) {
+            diagnostics.entries.settings = false;
+            return false;
+        }
+        drawer = document.createElement("div");
+        drawer.id = SETTINGS_DRAWER_ID;
+        drawer.dataset.sfVersion = PLUGIN_VERSION;
+        drawer.innerHTML = `
+          <div class="inline-drawer">
+            <div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0">
+              <b><i class="fa-solid fa-paintbrush system-flow-settings-icon" aria-hidden="true"></i> 万界系统管理局</b>
+              <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+            </div>
+            <div class="inline-drawer-content">
+              <p class="system-flow-settings-copy">系统流控制台入口、运行状态和当前聊天存档诊断。</p>
+              <div class="system-flow-status-grid">
+                <div><small>插件版本</small><b id="sf-settings-version">${PLUGIN_VERSION}</b></div>
+                <div><small>初始化状态</small><b id="sf-settings-init">等待初始化</b></div>
+                <div><small>入口状态</small><b id="sf-settings-entries">检测中</b></div>
+                <div><small>最近保存</small><b id="sf-settings-last-saved">尚未保存</b></div>
+              </div>
+              <div class="system-flow-chat-status">
+                <small>当前聊天存档</small>
+                <b id="sf-settings-chat">检测中</b>
+              </div>
+              <button id="sf-open-settings-panel" type="button" class="menu_button menu_button_icon">
+                <i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i>
+                <span>打开系统管理局</span>
+              </button>
+              <div class="system-flow-error-box">
+                <small>最近错误 / 诊断</small>
+                <code id="sf-settings-error">暂无错误</code>
+              </div>
+            </div>
+          </div>`;
+        container.append(drawer);
+    }
+
+    const button = drawer.querySelector("#sf-open-settings-panel");
+    if (button && button.dataset.sfBound !== PLUGIN_VERSION) {
+        button.dataset.sfBound = PLUGIN_VERSION;
+        button.addEventListener("click", () => openManager("extension-settings"));
+    }
+    const toggle = drawer.querySelector(".inline-drawer-toggle");
+    if (toggle && toggle.dataset.sfBound !== PLUGIN_VERSION) {
+        toggle.dataset.sfBound = PLUGIN_VERSION;
+        toggle.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                toggle.click();
+            }
+        });
+    }
+    diagnostics.entries.settings = true;
+    updateSettingsStatus();
+    return true;
+}
+
+function mountLaunchEntries() {
+    mountWandEntry();
+    mountSettingsEntry();
+
+    if (diagnostics.entries.wand && diagnostics.entries.settings) {
+        entryObserver?.disconnect();
+        entryObserver = null;
+        clearTimeout(entryObserverTimer);
+        entryObserverTimer = null;
+        return true;
+    }
+    if (!entryObserver && document.body) {
+        const deadline = Date.now() + 15000;
+        entryObserver = new MutationObserver(() => {
+            mountWandEntry();
+            mountSettingsEntry();
+            if ((diagnostics.entries.wand && diagnostics.entries.settings) || Date.now() > deadline) {
+                entryObserver?.disconnect();
+                entryObserver = null;
+                clearTimeout(entryObserverTimer);
+                entryObserverTimer = null;
+            }
+            updateSettingsStatus();
+        });
+        entryObserver.observe(document.body, { childList: true, subtree: true });
+        entryObserverTimer = setTimeout(() => {
+            entryObserver?.disconnect();
+            entryObserver = null;
+            entryObserverTimer = null;
+            updateSettingsStatus();
+        }, 15000);
+    }
+    return false;
+}
+
+function updateSettingsStatus() {
+    const version = document.querySelector("#sf-settings-version");
+    const init = document.querySelector("#sf-settings-init");
+    const entries = document.querySelector("#sf-settings-entries");
+    const chat = document.querySelector("#sf-settings-chat");
+    const saved = document.querySelector("#sf-settings-last-saved");
+    const error = document.querySelector("#sf-settings-error");
+    if (!version || !init || !entries || !chat || !saved || !error) return;
+
+    version.textContent = PLUGIN_VERSION;
+    init.textContent = diagnostics.initialized ? "已初始化" : "初始化中";
+    entries.textContent = [
+        diagnostics.entries.floating ? "悬浮✓" : "悬浮×",
+        diagnostics.entries.wand ? "魔法棒✓" : "魔法棒×",
+        diagnostics.entries.settings ? "设置✓" : "设置×"
+    ].join(" · ");
+    saved.textContent = diagnostics.lastSavedAt || "尚未保存";
+
+    const context = ctx();
+    if (!context) {
+        chat.textContent = "上下文不可用";
+    } else if (!context.chatMetadata || typeof context.chatMetadata !== "object") {
+        chat.textContent = "chatMetadata 不可用，无法保存聊天数据";
+    } else {
+        const chatKey = currentChatKey(context);
+        if (!chatKey) {
+            chat.textContent = "当前没有活动聊天";
+        } else {
+            const current = context.chatMetadata[META_KEY];
+            chat.textContent = current
+                ? `已绑定：${chatKey} · ${Array.isArray(current.tasks) ? current.tasks.length : 0} 个任务`
+                : `等待首次保存：${chatKey}`;
+        }
+    }
+    const eventStatus = Object.entries(diagnostics.events)
+        .map(([name, status]) => `${name}:${status}`)
+        .join(" · ");
+    error.textContent = diagnostics.lastError || (eventStatus ? `事件：${eventStatus}` : "暂无错误");
 }
 
 function onChatChanged() {
     panel = document.querySelector("#sf-panel");
     lastProcessedMessageKey = "";
+    mountLaunchEntries();
     const modal = document.querySelector("#sf-modal");
     if (modal?.classList.contains("open")) render();
     refreshPrompt();
+    updateSettingsStatus();
 }
 
 function messageKey(context, index, message) {
@@ -500,6 +771,7 @@ function onGenerationEnded() {
         processMessage(message, messageKey(c, index, message));
     }
     refreshPrompt();
+    updateSettingsStatus();
 }
 function extractMessageText(data, seen = new WeakSet(), depth = 0) {
     if (typeof data === "string") return data;
@@ -519,66 +791,82 @@ function extractMessageText(data, seen = new WeakSet(), depth = 0) {
     return "";
 }
 
-function registerListener(type, handler) {
+function registerListener(eventName, handler) {
+    const type = event_types?.[eventName];
     if (!type || typeof eventSource?.on !== "function") {
-        throw new Error(`SillyTavern event source is unavailable for ${type || "unknown event"}.`);
+        diagnostics.events[eventName] = type ? "eventSource unavailable" : "event type unavailable";
+        console.warn(`${LOG_PREFIX} Optional event is unavailable: ${eventName}`);
+        return false;
     }
+    if (registeredListeners.has(type)) return true;
     eventSource.on(type, handler);
-    registeredListeners.push({ type, handler });
+    registeredListeners.set(type, handler);
+    diagnostics.events[eventName] = "registered";
+    return true;
 }
 
-function disposeUi() {
-    clearTimeout(promptTimer);
-    for (const { type, handler } of registeredListeners.splice(0)) {
-        eventSource?.removeListener?.(type, handler);
-    }
-    if (keyboardHandler) {
-        document.removeEventListener("keydown", keyboardHandler);
-        keyboardHandler = null;
-    }
-    document.querySelector("#system-flow-root")?.remove();
-    panel = null;
-    initialized = false;
+function scheduleBootstrapRetry() {
+    if (bootstrapAttempts >= 20 || bootstrapTimer) return;
+    const delay = Math.min(250 + bootstrapAttempts * 100, 2000);
+    bootstrapTimer = setTimeout(() => {
+        bootstrapTimer = null;
+        bootstrapAttempts += 1;
+        init(true);
+    }, delay);
 }
 
-function init() {
-    if (initialized) return;
+function onAppReady() {
+    diagnostics.appReady = true;
+    init(true);
+    mountLaunchEntries();
+    updateSettingsStatus();
+}
+
+function init(force = false) {
+    if (initialized && !force) {
+        mount();
+        mountLaunchEntries();
+        updateSettingsStatus();
+        return true;
+    }
+    const wasInitialized = initialized;
     try {
-        const context = ctx();
-        if (!context) throw new Error("SillyTavern.getContext() returned no context.");
-        if (!context.chatMetadata || typeof context.chatMetadata !== "object") {
-            throw new Error("SillyTavern context does not expose chatMetadata.");
-        }
-        if (typeof context.setExtensionPrompt !== "function") {
-            throw new Error("SillyTavern context does not expose setExtensionPrompt().");
-        }
-        if (typeof context.saveMetadata !== "function") {
-            throw new Error("SillyTavern context does not expose saveMetadata().");
-        }
-        const requiredEvents = ["CHAT_CHANGED", "MESSAGE_RECEIVED", "GENERATION_ENDED"];
-        const missingEvents = requiredEvents.filter(name => !event_types?.[name]);
-        if (missingEvents.length) {
-            throw new Error(`SillyTavern 1.19 event types are missing: ${missingEvents.join(", ")}`);
-        }
         if (!document.body) throw new Error("document.body is not ready.");
-        if (!mount()) throw new Error("The floating launcher could not be mounted.");
+        if (!mount()) throw new Error("The management shell could not be mounted.");
 
-        registerListener(event_types.CHAT_CHANGED, onChatChanged);
-        registerListener(event_types.MESSAGE_RECEIVED, onMessageReceived);
-        registerListener(event_types.GENERATION_ENDED, onGenerationEnded);
-        keyboardHandler = event => {
-            if (event.key === "Escape" && document.querySelector("#sf-modal.open")) {
-                setModalOpen(false);
-            }
-        };
-        document.addEventListener("keydown", keyboardHandler);
+        registerListener("APP_READY", onAppReady);
+        registerListener("CHAT_CHANGED", onChatChanged);
+        registerListener("MESSAGE_RECEIVED", onMessageReceived);
+        registerListener("GENERATION_ENDED", onGenerationEnded);
+
+        if (!keyboardHandler) {
+            keyboardHandler = event => {
+                if (event.key === "Escape" && document.querySelector("#sf-modal.open")) {
+                    setModalOpen(false);
+                }
+            };
+            document.addEventListener("keydown", keyboardHandler);
+        }
 
         initialized = true;
+        diagnostics.initialized = true;
+        mountLaunchEntries();
         refreshPrompt();
-        console.info(`${LOG_PREFIX} loaded v0.1.3 for SillyTavern 1.19.x`);
+        updateSettingsStatus();
+        if (!wasInitialized) {
+            console.info(`${LOG_PREFIX} loaded v${PLUGIN_VERSION} for SillyTavern 1.19.x`, diagnostics.entries);
+        }
+        return true;
     } catch (error) {
-        disposeUi();
-        console.error(`${LOG_PREFIX} initialization failed. Check manifest.json and the browser module error above.`, error);
+        diagnostics.initialized = false;
+        reportError("initialization", error);
+        scheduleBootstrapRetry();
+        return false;
     }
 }
-if (document.readyState==="loading") document.addEventListener("DOMContentLoaded",init,{once:true}); else init();
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => init(), { once: true });
+} else {
+    init();
+}

@@ -73,7 +73,7 @@
 @media(max-width:520px){#system-flow-root .sf-grid{grid-template-columns:1fr}#system-flow-root .sf-tabs button{font-size:.74em;padding:8px 5px}#system-flow-root .sf-header h2{font-size:1.08em}}
 
 
-/* System Flow 0.1.4 — wand, settings drawer, floating launcher and modal */
+/* System Flow 0.1.5 — selection workspace, management workspace and responsive shell */
 #system-flow-root{position:relative;z-index:2147482000;margin:0;isolation:isolate}
 #system-flow-root #sf-fab{position:fixed;right:22px;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:3;width:54px;height:54px;padding:13px;border-radius:50%;border:1px solid rgba(104,225,255,.9);background:linear-gradient(145deg,#087bd0,#07365c);box-shadow:0 5px 22px rgba(0,0,0,.42),0 0 18px rgba(72,216,255,.4);display:grid;place-items:center;cursor:pointer;pointer-events:auto}
 #system-flow-root #sf-fab svg{width:27px;height:27px;fill:none;stroke:#e8fbff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 4px rgba(72,216,255,.7))}
@@ -106,3 +106,124 @@
 #system-flow-settings .system-flow-error-box{border-top:1px solid rgba(75,150,199,.22);padding-top:8px}
 #system-flow-settings .system-flow-error-box code{display:block;white-space:pre-wrap;overflow-wrap:anywhere;color:#8ccfe6;font-size:.72em;max-height:100px;overflow:auto}
 @media(max-width:600px){#system-flow-settings .system-flow-status-grid{grid-template-columns:1fr}}
+/* Selection and management workspaces */
+#system-flow-root .sf-page{display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%;overflow-x:hidden}
+#system-flow-root .sf-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
+#system-flow-root .sf-section-heading h3{margin:0}
+#system-flow-root .sf-section-heading .sf-muted{margin-bottom:0}
+#system-flow-root .sf-selection-card{padding-bottom:14px}
+#system-flow-root .sf-system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:9px;margin-top:12px}
+#system-flow-root .sf-system-card{position:relative;display:grid;grid-template-columns:38px minmax(0,1fr) 24px;align-items:start;gap:9px;min-width:0;padding:12px;border:1px solid rgba(84,160,211,.28);border-radius:10px;background:rgba(6,20,34,.66);cursor:pointer;transition:border-color .16s,background .16s,box-shadow .16s,transform .16s;touch-action:manipulation}
+#system-flow-root .sf-system-card:hover{border-color:rgba(72,216,255,.55);background:rgba(10,58,89,.34)}
+#system-flow-root .sf-system-card.selected{border-color:#49dcff;background:linear-gradient(145deg,rgba(8,96,150,.42),rgba(7,35,58,.92));box-shadow:inset 0 0 20px rgba(25,162,255,.14),0 0 12px rgba(72,216,255,.12)}
+#system-flow-root .sf-system-checkbox{position:absolute;opacity:0;pointer-events:none}
+#system-flow-root .sf-system-mark{width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(73,220,255,.32);border-radius:9px;background:rgba(7,50,80,.8);color:#63dcff;font-size:1.05em}
+#system-flow-root .sf-system-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
+#system-flow-root .sf-system-copy b{color:#def6ff;font-size:.96em;overflow-wrap:anywhere}
+#system-flow-root .sf-system-copy small{color:#8eafc8;font-size:.78em;line-height:1.4;overflow-wrap:anywhere}
+#system-flow-root .sf-system-copy em{font-style:normal;color:#55c9ed;font-size:.72em;line-height:1.4}
+#system-flow-root .sf-system-check{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;border:1px solid rgba(72,216,255,.28);color:transparent;font-size:.8em}
+#system-flow-root .sf-system-card.selected .sf-system-check{border-color:#49dcff;background:#087bd0;color:#fff;box-shadow:0 0 10px rgba(72,216,255,.42)}
+#system-flow-root .sf-segment{display:inline-flex;padding:3px;border:1px solid rgba(77,157,209,.32);border-radius:8px;background:#061421}
+#system-flow-root .sf-segment button{border:0;background:transparent;padding:6px 13px;box-shadow:none}
+#system-flow-root .sf-segment button.active{background:#0b79b6;color:#fff}
+#system-flow-root .sf-selection-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+#system-flow-root .sf-confirm-button{margin-left:auto;min-width:210px}
+#system-flow-root .sf-management-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 11px;border:1px solid rgba(72,216,255,.18);border-radius:9px;background:rgba(5,23,39,.68)}
+#system-flow-root #sf-back-selection{white-space:nowrap}
+#system-flow-root .sf-mini-stats{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+#system-flow-root .sf-mini-stats span{padding:5px 8px;border:1px solid rgba(72,216,255,.2);border-radius:6px;background:rgba(9,42,65,.72);color:#82b5d3;font-size:.76em}
+#system-flow-root .sf-mini-stats b{color:#8cecff}
+#system-flow-root .sf-system-brief p{margin:4px 0;color:#a8c8dc;font-size:.83em;line-height:1.5}
+#system-flow-root .sf-system-brief>small{color:#55c9ed;font-size:.75em}
+#system-flow-root .sf-system-switcher{display:flex;gap:6px;overflow-x:auto;padding:2px 0 5px;scrollbar-width:thin}
+#system-flow-root .sf-system-switcher button{white-space:nowrap;flex:0 0 auto}
+#system-flow-root .sf-system-switcher button.active{border-color:#49dcff;background:#0b79b6;color:#fff}
+#system-flow-root .sf-source-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}
+#system-flow-root .sf-source-card{min-width:0;padding:10px;border:1px solid rgba(72,216,255,.2);border-radius:8px;background:rgba(5,23,39,.72);overflow-wrap:anywhere}
+#system-flow-root .sf-source-card small{display:block;color:#82b5d3;font-size:.72em;margin-bottom:5px}
+#system-flow-root .sf-source-card>b{display:block;color:#8cecff;font-size:.88em;margin-bottom:5px}
+#system-flow-root .sf-source-card p{margin:4px 0;color:#9dbfd4;font-size:.76em;line-height:1.45}
+#system-flow-root .sf-source-card p span{display:inline-block;min-width:3.2em;color:#55c9ed}
+#system-flow-root .sf-profile-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+#system-flow-root .sf-profile-form label,#system-flow-root .sf-attribute-form label{display:flex;flex-direction:column;gap:4px;min-width:0;color:#8fc4df;font-size:.8em}
+#system-flow-root .sf-profile-form label:nth-of-type(n+5),#system-flow-root .sf-profile-form button{grid-column:1/-1}
+#system-flow-root .sf-profile-form textarea{min-height:76px}
+#system-flow-root .sf-attribute-form{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(90px,.7fr) auto;align-items:end;gap:8px;margin-top:10px}
+#system-flow-root .sf-pending>small{display:block;margin:4px 0 7px;color:#8fb9d1}
+
+@media(max-width:720px){
+    #system-flow-root .sf-system-grid,#system-flow-root .sf-source-grid{grid-template-columns:1fr}
+    #system-flow-root .sf-profile-form{grid-template-columns:1fr}
+    #system-flow-root .sf-profile-form label:nth-of-type(n+5),#system-flow-root .sf-profile-form button{grid-column:auto}
+    #system-flow-root .sf-attribute-form{grid-template-columns:1fr 1fr}
+}
+
+@media(max-width:600px){
+    #system-flow-root #sf-modal{display:none;align-items:stretch;padding:0;height:100vh;height:100dvh}
+    #system-flow-root #sf-modal.open{display:flex}
+    #system-flow-root #sf-modal .sf-window{display:flex;flex-direction:column;width:100%;max-width:100vw;height:100vh;height:100dvh;max-height:100dvh;border:0;border-radius:0;overflow:hidden}
+    #system-flow-root #sf-modal .sf-window-head{flex:0 0 auto;padding-top:calc(9px + env(safe-area-inset-top,0px));padding-left:max(11px,env(safe-area-inset-left,0px));padding-right:max(11px,env(safe-area-inset-right,0px))}
+    #system-flow-root #sf-modal #sf-panel{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:9px max(9px,env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) max(9px,env(safe-area-inset-left,0px));-webkit-overflow-scrolling:touch}
+    #system-flow-root .sf-page{gap:8px}
+    #system-flow-root .sf-card{padding:10px;border-radius:9px;margin:7px 0}
+    #system-flow-root .sf-header{padding:10px;border-radius:9px}
+    #system-flow-root .sf-header h2{font-size:1.05em;overflow-wrap:anywhere}
+    #system-flow-root .sf-system-grid{gap:7px}
+    #system-flow-root .sf-system-card{grid-template-columns:34px minmax(0,1fr) 22px;padding:10px 9px;gap:8px}
+    #system-flow-root .sf-system-mark{width:32px;height:32px}
+    #system-flow-root .sf-system-copy small{font-size:.76em}
+    #system-flow-root .sf-selection-actions{display:grid;grid-template-columns:1fr 1fr}
+    #system-flow-root .sf-confirm-button{grid-column:1/-1;width:100%;min-width:0;margin-left:0;min-height:46px}
+    #system-flow-root .sf-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;overflow:visible;margin:9px 0}
+    #system-flow-root .sf-tabs button{white-space:normal;min-height:42px;padding:7px 5px;font-size:.78em}
+    #system-flow-root .sf-management-toolbar{align-items:stretch;flex-direction:column}
+    #system-flow-root .sf-mini-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));justify-content:stretch}
+    #system-flow-root .sf-mini-stats span{text-align:center;padding:6px 4px;overflow-wrap:anywhere}
+    #system-flow-root .sf-attribute-form{grid-template-columns:1fr;align-items:stretch}
+    #system-flow-root .sf-row{display:grid;grid-template-columns:1fr;gap:7px}
+    #system-flow-root .sf-row.sf-between{display:flex;flex-direction:column;align-items:stretch}
+    #system-flow-root button,#system-flow-root select,#system-flow-root input,#system-flow-root textarea{font-size:16px}
+    #system-flow-root button{min-height:42px}
+    #system-flow-root .sf-form input,#system-flow-root .sf-form textarea,#system-flow-root .sf-form select{padding:10px;min-width:0;max-width:100%}
+    #system-flow-root .sf-list-item,#system-flow-root .sf-source-card,#system-flow-root .sf-log{overflow-wrap:anywhere;min-width:0}
+    #system-flow-root .sf-section-heading{flex-direction:column;align-items:stretch}
+    #system-flow-root .sf-segment{width:100%}
+    #system-flow-root .sf-segment button{flex:1}
+    #system-flow-root .sf-system-switcher{margin:0 -2px;padding-bottom:7px}
+}
+
+@media(max-width:430px){
+    #system-flow-root #sf-fab{right:max(12px,env(safe-area-inset-right,0px));bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+    #system-flow-root #sf-modal .sf-window-head b{font-size:.85em}
+    #system-flow-root .sf-mini-stats{grid-template-columns:1fr 1fr}
+    #system-flow-root .sf-mini-stats span:last-child{grid-column:1/-1}
+    #system-flow-root .sf-selection-actions{grid-template-columns:1fr}
+    #system-flow-root .sf-confirm-button{grid-column:auto}
+}
+
+@media(max-width:390px){
+    #system-flow-root .sf-header{gap:7px}
+    #system-flow-root .sf-section-heading{gap:7px}
+    #system-flow-root .sf-tabs{gap:5px}
+    #system-flow-root .sf-selection-actions{gap:6px}
+}
+
+@media(max-width:375px){
+    #system-flow-root #sf-fab{width:46px;height:46px;padding:11px}
+    #system-flow-root #sf-fab svg{width:23px;height:23px}
+    #system-flow-root .sf-header h2{font-size:.98em}
+    #system-flow-root .sf-eyebrow{font-size:.62em}
+    #system-flow-root .sf-card{padding:8px}
+    #system-flow-root .sf-system-card{padding:9px 8px}
+    #system-flow-root .sf-tabs button{font-size:.74em}
+}
+
+@media(max-width:320px){
+    #system-flow-root #sf-modal .sf-window-head{padding-left:8px;padding-right:8px}
+    #system-flow-root #sf-modal #sf-panel{padding-left:7px;padding-right:7px}
+    #system-flow-root .sf-system-card{grid-template-columns:30px minmax(0,1fr) 20px;gap:6px}
+    #system-flow-root .sf-system-mark{width:28px;height:28px;font-size:.9em}
+    #system-flow-root .sf-mini-stats{grid-template-columns:1fr}
+    #system-flow-root .sf-mini-stats span:last-child{grid-column:auto}
+}
